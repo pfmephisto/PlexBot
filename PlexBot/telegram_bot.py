@@ -8,15 +8,15 @@ import os
 from threading import Thread
 from functools import wraps
 import traceback
-# import datetime
-# import weakref
-# import shelve
-# import signal
 from emoji import emojize
+from uuid import uuid4
 import telegram
 from telegram import (ReplyKeyboardMarkup,
                       # InlineKeyboardButton,
                       # InlineKeyboardMarkup,
+                      InlineQueryResultArticle,
+                      InputTextMessageContent,
+                      Update,
                       ParseMode,
                       ChatAction)
 from telegram.ext import (Updater,
@@ -24,17 +24,27 @@ from telegram.ext import (Updater,
                           MessageHandler,
                           Filters,
                           ConversationHandler,
+                          CallbackContext,
+                          InlineQueryHandler,
                           # CallbackQueryHandler,
                           PicklePersistence)
-from telegram.utils.helpers import mention_html
+from telegram.utils.helpers import (
+    mention_html,
+    # escape_markdown
+    )
+
 from .plex_api import Plex
+from plexapi.exceptions import NotFound
+# from typing import NewType
+from collections.abc import Callable
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
 # General Fuctions
-def token_required(func):
+def token_required(func: Callable) -> Callable:
     """Resrict the wrapped functions to only be able to be called by admins"""
     @wraps(func)
     def wrapped(update, context, *args, **kwargs):
@@ -49,7 +59,7 @@ def token_required(func):
     return wrapped
 
 
-def restricted_developer(func):
+def restricted_developer(func: Callable) -> Callable:
     """Restrict the wrapped methods to only be able to be called by admins"""
     @wraps(func)
     def wrapped(update, context, *args, **kwargs):
@@ -63,7 +73,7 @@ def restricted_developer(func):
     return wrapped
 
 
-def send_typing_action(func):
+def send_typing_action(func: Callable) -> Callable:
     """Sends typing action while processing func command."""
 
     @wraps(func)
@@ -84,7 +94,7 @@ def shutdown(signum, frame):
 
 
 # Non member Functions
-def help_message(update, context):
+def help_message(update: Update, context: CallbackContext) -> None:
     """Show help messgae to user"""
     del context  # unused
     text = "This bot will inform you about the current state of coffee\n\
@@ -95,14 +105,46 @@ def help_message(update, context):
     update.message.reply_text(text)
 
 
+def inlinequery(update: Update, context: CallbackContext) -> None:
+    def format_results(result) -> InlineQueryResultArticle:
+
+        artical = InlineQueryResultArticle(
+                        id=uuid4(),
+                        title=result.title,
+                        input_message_content=InputTextMessageContent(
+                            result.title
+                            )
+                        )
+        return artical
+
+    if 'token' in context.user_data:
+        plex = Plex(token=context.user_data['token'], server='Server')
+        query = update.inline_query.query
+        results = [format_results(result) for result in plex.find_music(
+            str(query))]
+
+        update.inline_query.answer(results)
+    else:
+        update.inline_query.answer(
+            [InlineQueryResultArticle(
+                        id=uuid4(),
+                        title="You need to log in first",
+                        input_message_content=InputTextMessageContent(
+                            f'write "/start" to {context.bot.name}'
+                        )
+                        )
+             ])
+        pass
+
+
 @restricted_developer
-def manual_error(update, context):
+def manual_error(update: Update, context: CallbackContext) -> None:
     """Manualy raise error"""
     raise Exception('ErrorCommand')
 
 
 # Other options
-def error(update, context):
+def error(update: Update, context: CallbackContext) -> None:
     """Log Errors caused by Updates."""
     # we want to notify the user of this problem.
     # This will always work, but not notify users if the update is an
@@ -158,14 +200,14 @@ def error(update, context):
 
 
 # Conversation handler stages
-CHOICE, PASSWORD = range(2)
+CHOICE, PASSWORD, CHECK = range(3)
 
 
-def start(update, context):
+def start(update: Update, context: CallbackContext) -> None:
     """Start bot conversation"""
 
     del context  # unused
-    reply_keyboard = [['sign-in', 'sing-out', '/cancel']]
+    reply_keyboard = [['sign-in', 'sign-out', '/cancel']]
 
     update.message.reply_text(
         'Hi! My I am the Plex Media bot.\n'
@@ -180,62 +222,65 @@ def start(update, context):
 
 
 # Conversation functions
-def signin(update, context):
+def signin(update: Update, context: CallbackContext) -> None:
     """Initiate substribtion proccess"""
-    # del context  # unused
+
+    def check_if_already_logged_in(context) -> bool:
+        if 'token' in context.user_data:
+            try:
+                Plex(token=context.user_data['token'], server='Server')
+                return True
+            except NotFound as e:
+                logger.debug('unable to log in: %s', e.msg)
+                return False
+        return False
+
     user = update.message.from_user
     logger.info("%s is trying to subscribe", user.first_name)
+
+    # exit if alreay logged in
+    if check_if_already_logged_in(context):
+        update.message.reply_text('You are already logged in',
+                                  reply_markup=telegram.ReplyKeyboardRemove())
+        logger.debug("%s is already logged in", user.first_name)
+        return ConversationHandler.END
+
     update.message.reply_text('Please enter your username',
                               reply_markup=telegram.ReplyKeyboardRemove())
     return PASSWORD
 
 
-def password(update, context):
+def password(update: Update, context: CallbackContext) -> None:
     """Initiate substribtion proccess"""
 
-    def login(username, password):
-        plex = Plex(username=username, password=password, server='Server')
-        return True
-    # del context  # unused
-
-    # user = update.message.from_user
+    context.chat_data['username'] = update.message.text
     update.message.reply_text('Please enter your password',
                               reply_markup=telegram.ReplyKeyboardRemove())
-
-    if login('username', 'password'):
-        return ConversationHandler.END
-    return CHOICE
+    return CHECK
 
 
-# def password(update, context):
-#     """Check password"""
-#     del context  # unused
-#     reply_keyboard = [['subscribe', 'unsubscribe', '/cancel']]
-#     user = update.message.from_user
-#     if update.message.text == str(PASSWORD):
-#         logger.info("%s has entered the correct password", user.first_name)
-#         try:
-#             # DB.Add("Subscribers",update.message.chat["id"])
-#             my_chat_ids.add(update.message.chat["id"])
-#             logger.debug("%s has been added to the DB", user.first_name)
-#             update.message.reply_text('You have sucsessfully signed up')
-#             return ConversationHandler.END
-#         except Exception as error_message:
-#             logger.warning("%s could not to added to DB", user.first_name)
-#             logger.info(error_message)
-#             return ConversationHandler.END
-#     else:
-#         logger.info("%s Entered the wrong password", user.first_name)
-#         update.message.reply_text('You have endered the wrong password\n'
-#                                   'what do you want to do?',
-#                                   reply_markup=ReplyKeyboardMarkup(
-#                                       reply_keyboard,
-#                                       one_time_keyboard=True)
-#                                   )
-#         return CHOICE
+@send_typing_action
+def check_login(update: Update, context: CallbackContext) -> None:
+    def login(username: str, password: str) -> bool:
+        try:
+            plex = Plex(username=username, password=password, server='Server')
+            context.user_data['token'] = plex.get_token()
+        except NotFound as e:
+            logger.debug('Unable to log in: %s', e.msg)
+            return False
+        return True
+
+    if login(context.chat_data['username'], update.message.text):
+        update.message.reply_text('The log in has been successful')
+
+    else:
+        update.message.reply_text(
+            'The log in has has failed \nPlease try again')
+    update.message.delete()  # = 'password has been received'
+    return ConversationHandler.END
 
 
-def cancel(update, context):
+def cancel(update: Update, context: CallbackContext) -> None:
     """Cancel conversation"""
     del context  # unused
     user = update.message.from_user
@@ -246,21 +291,17 @@ def cancel(update, context):
     return ConversationHandler.END
 
 
-def remove(update, context):
-    """Remove user from subscribtion list"""
-    del context  # unused
-    user = update.message.from_user
-    try:
-        # DB.Remove("Subscribers", update.message.chat["id"])
-        # my_chat_ids.remove(update.message.chat["id"])
-        # update.message.reply_text(
-        #     'You have sucsessfully been removed from the mailing list')
-        # logger.info("%s has been removed from the BD", user.first_name)
-        return ConversationHandler.END
-    except Exception as error_message:
-        logger.warning("%s is not in the BD", user.first_name)
-        logger.info(error_message)
-        return ConversationHandler.END
+def remove(update: Update, context: CallbackContext) -> None:
+    """Remove user token"""
+
+    if 'token' in context.user_data:
+        context.user_data.pop('token', None)
+        update.message.reply_text('Your user data has been removed',
+                                  reply_markup=telegram.ReplyKeyboardRemove())
+    else:
+        update.message.reply_text('You don\'t have any data to be removed',
+                                  reply_markup=telegram.ReplyKeyboardRemove())
+    return ConversationHandler.END
 
 
 conv_handler = ConversationHandler(
@@ -271,11 +312,13 @@ conv_handler = ConversationHandler(
                  CommandHandler('cancel', cancel)],
         PASSWORD: [CommandHandler('cancel', cancel),
                    MessageHandler(Filters.all, password)],
+        CHECK: [CommandHandler('cancel', cancel),
+                MessageHandler(Filters.all, check_login)],
     },
     fallbacks=[CommandHandler('cancel', error)])
 
 
-def start_bot():
+def start_bot() -> None:
     logger.info('Startting bot')
     logger.debug('Token: %s', os.getenv('TELEGRAM_TOKEN'))
 
@@ -320,6 +363,7 @@ def start_bot():
                                           restart,
                                           filters=Filters.user(
                                               username=os.getenv('sysadmin'))))
+    dispatcher.add_handler(InlineQueryHandler(inlinequery))
 
     # Seduled eventes
     # job_queue.run_repeating(update_coffee_state, interval=2, first=0)

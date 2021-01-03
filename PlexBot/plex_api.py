@@ -1,6 +1,7 @@
 import logging
 from plexapi.myplex import MyPlexAccount
-# from plexapi.server import PlexServer
+from plexapi.exceptions import NotFound
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,6 +53,13 @@ class Plex():
                    self.music.search(str(serach),
                                      maxresults=int(num_Results))]
         return results[:num_Results]
+
+    def get_token(self) -> str:
+        try:
+            return str(self.plex._token)
+        except NotFound as e:
+            logger.debug('Unable to log in: %s', e.msg)
+            return None
 
     def _set_default_music_library(self):
 
