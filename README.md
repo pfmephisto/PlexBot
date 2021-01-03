@@ -1,3 +1,3 @@
 # Plex Media Bot
 
-## This bot allows accses to plex content inside a telegram chat
+This bot allows accses to plex content inside a telegram chat
