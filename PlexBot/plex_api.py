@@ -66,9 +66,9 @@ class Plex():
             if session.TAG == 'Track':
                 currently_playing.append(session)
 
-            # check if any sone is currently playing
-            if len(currently_playing) != 0:
-                return currently_playing
+        # check if any sone is currently playing
+        if len(currently_playing) != 0:
+            return currently_playing
 
         # in case nothing is playing return None
         return None
