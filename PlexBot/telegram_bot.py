@@ -15,6 +15,9 @@ from telegram import (ReplyKeyboardMarkup,
                       # InlineKeyboardButton,
                       # InlineKeyboardMarkup,
                       InlineQueryResultArticle,
+                      InlineQueryResultAudio,
+                      InlineQueryResultPhoto,
+                      InlineQueryResult,
                       InputTextMessageContent,
                       Update,
                       ParseMode,
@@ -106,24 +109,47 @@ def help_message(update: Update, context: CallbackContext) -> None:
 
 
 def inlinequery(update: Update, context: CallbackContext) -> None:
-    def format_results(result) -> InlineQueryResultArticle:
 
-        artical = InlineQueryResultArticle(
-                        id=uuid4(),
-                        title=result.title,
-                        input_message_content=InputTextMessageContent(
-                            result.title
-                            )
-                        )
-        return artical
+    def format_results(result) -> InlineQueryResult:
+
+        _result: InlineQueryResult = None
+
+        if result.TAG == 'Track':
+            url = result.getStreamURL()
+
+            html_message = f'<a href="{url}">{result.grandparentTitle} - {result.title}</a>\n<i>{result.parentTitle}</i>'
+            _result: InlineQueryResultAudio = InlineQueryResultAudio(
+                id=uuid4(),
+                audio_url=url,
+                title=result.title,
+                performer=result.grandparentTitle,
+                audio_duration=int(result.duration/1000),  # milliseconds to sec
+                caption=result.parentTitle,
+                input_message_content=InputTextMessageContent(
+                    html_message,
+                    parse_mode=ParseMode.HTML)
+                )
+        elif result.TAG == 'Artist':
+            pass
+
+        return _result
 
     if 'token' in context.user_data:
         plex = Plex(token=context.user_data['token'], server='Server')
-        query = update.inline_query.query
-        results = [format_results(result) for result in plex.find_music(
-            str(query))]
 
-        update.inline_query.answer(results)
+        results: InlineQueryResult = list()
+
+        # query = update.inline_query.query
+        # results = [format_results(result) for result in plex.find_music(
+        #     str(query))]
+
+        currently_playing = plex.currently_playing()
+        if currently_playing is not None:
+            results = [format_results(c_playing) for c_playing in
+                       list(currently_playing)] + results
+
+        if len(results) != 0:
+            update.inline_query.answer(results)
     else:
         update.inline_query.answer(
             [InlineQueryResultArticle(
@@ -186,14 +212,16 @@ def error(update: Update, context: CallbackContext) -> None:
     if update.poll:
         payload += f' with the poll id {update.poll.id}.'
     # lets put this in a "well" formatted text
-    text = f"Hey.\n The error <code>{context.error}</code> \
-        happened{payload}. The full traceback:\n\n\
-        <code>{trace}</code>"
+    text = f"Hey.\nThe error <code>{context.error}</code> happened{payload}.\n\
+The full traceback:\n\n\
+<code>{trace.replace('<',' //OPEN_BRACET ').replace('>','  //CLOSE_BRACET  ')}\
+</code>"
     # and send it to the dev(s)
     context.bot.send_message(
         str(os.getenv('DEVELOPER')),
         text,
-        parse_mode=ParseMode.HTML)
+        parse_mode=ParseMode.HTML
+        )
     # we raise the error again, so the logger module catches it.
     # If you don't use the logger module, use it.
     raise Exception(text)

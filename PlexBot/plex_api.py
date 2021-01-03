@@ -1,5 +1,7 @@
 import logging
+from plexapi.server import PlexServer
 from plexapi.myplex import MyPlexAccount
+from plexapi.audio import Audio
 from plexapi.exceptions import NotFound
 
 logger = logging.getLogger(__name__)
@@ -32,8 +34,8 @@ class Plex():
         self.password = kwargs.get('password')
         self.server = kwargs.get('server')
 
-        self.plex = None
-        self.music = None
+        self.plex: PlexServer = None
+        self.music = None  # Music library
 
         if not self.token:
             self._connect_to_server_lognin()
@@ -53,6 +55,23 @@ class Plex():
                    self.music.search(str(serach),
                                      maxresults=int(num_Results))]
         return results[:num_Results]
+
+    def currently_playing(self) -> Audio:
+
+        sessions = self.plex.sessions()
+
+        currently_playing = []
+
+        for session in sessions:
+            if session.TAG == 'Track':
+                currently_playing.append(session)
+
+            # check if any sone is currently playing
+            if len(currently_playing) != 0:
+                return currently_playing
+
+        # in case nothing is playing return None
+        return None
 
     def get_token(self) -> str:
         try:
