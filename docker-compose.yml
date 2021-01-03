@@ -1,0 +1,11 @@
+version: '3.4'
+
+services:
+  plextelegrambot:
+    image: plextelegrambot
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    environment: 
+      TELEGRAM_TOKEN: telegram_bot_token
+      DEVELOPER: telegram_developer_id
