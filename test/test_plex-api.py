@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from PlexBot.plex_api import Plex
+from src.plex_api import Plex
 
 load_dotenv()
 plex = None

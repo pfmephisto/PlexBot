@@ -6,6 +6,6 @@ services:
     build:
       context: .
       dockerfile: ./Dockerfile
-    environment: 
-      TELEGRAM_TOKEN: telegram_bot_token
-      DEVELOPER: telegram_developer_id
+      environment: 
+        TELEGRAM_TOKEN: telegram_bot_token
+        DEVELOPER: telegram_developer_id

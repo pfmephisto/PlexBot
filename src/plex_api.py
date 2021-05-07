@@ -30,8 +30,6 @@ class Plex():
         """
 
         self.token = kwargs.get('token')
-        self.username = kwargs.get('username')
-        self.password = kwargs.get('password')
         self.server = kwargs.get('server')
 
         self.plex: PlexServer = None

@@ -5,23 +5,25 @@ This file handles the telegram bot and it's functionality.
 import logging
 import sys
 import os
+import asyncio
 from threading import Thread
 from functools import wraps
 import traceback
 from emoji import emojize
 from uuid import uuid4
 import telegram
-from telegram import (ReplyKeyboardMarkup,
-                      # InlineKeyboardButton,
-                      # InlineKeyboardMarkup,
-                      InlineQueryResultArticle,
-                      InlineQueryResultAudio,
-                      InlineQueryResultPhoto,
-                      InlineQueryResult,
-                      InputTextMessageContent,
-                      Update,
-                      ParseMode,
-                      ChatAction)
+from telegram import (
+    ReplyKeyboardMarkup,
+    # InlineKeyboardButton,
+    # InlineKeyboardMarkup,
+    InlineQueryResultArticle,
+    InlineQueryResultAudio,
+    # InlineQueryResultPhoto,
+    InlineQueryResult,
+    InputTextMessageContent,
+    Update,
+    ParseMode,
+    ChatAction)
 from telegram.ext import (Updater,
                           CommandHandler,
                           MessageHandler,
@@ -36,7 +38,8 @@ from telegram.utils.helpers import (
     # escape_markdown
     )
 
-from .plex_api import Plex
+from plex_api import Plex
+from plexauth import PlexAuth
 from plexapi.exceptions import NotFound
 # from typing import NewType
 from collections.abc import Callable
@@ -117,13 +120,14 @@ def inlinequery(update: Update, context: CallbackContext) -> None:
         if result.TAG == 'Track':
             url = result.getStreamURL()
 
-            html_message = f'<a href="{url}">{result.grandparentTitle} - {result.title}</a>\n<i>{result.parentTitle}</i>'
+            html_message = f'<a href="{url}">{result.grandparentTitle} - \
+                {result.title}</a>\n<i>{result.parentTitle}</i>'
             _result: InlineQueryResultAudio = InlineQueryResultAudio(
                 id=uuid4(),
                 audio_url=url,
                 title=result.title,
                 performer=result.grandparentTitle,
-                audio_duration=int(result.duration/1000),  # milliseconds to sec
+                audio_duration=int(result.duration/1000),  # milli sec to sec
                 caption=result.parentTitle,
                 input_message_content=InputTextMessageContent(
                     html_message,
@@ -228,7 +232,7 @@ The full traceback:\n\n\
 
 
 # Conversation handler stages
-CHOICE, PASSWORD, CHECK = range(3)
+CHOICE, CHECK = range(2)
 
 
 def start(update: Update, context: CallbackContext) -> None:
@@ -250,62 +254,55 @@ def start(update: Update, context: CallbackContext) -> None:
 
 
 # Conversation functions
-def signin(update: Update, context: CallbackContext) -> None:
-    """Initiate substribtion proccess"""
-
-    def check_if_already_logged_in(context) -> bool:
-        if 'token' in context.user_data:
-            try:
-                Plex(token=context.user_data['token'], server='Server')
-                return True
-            except NotFound as e:
-                logger.debug('unable to log in: %s', e.msg)
-                return False
-        return False
-
-    user = update.message.from_user
-    logger.info("%s is trying to subscribe", user.first_name)
-
-    # exit if alreay logged in
-    if check_if_already_logged_in(context):
-        update.message.reply_text('You are already logged in',
-                                  reply_markup=telegram.ReplyKeyboardRemove())
-        logger.debug("%s is already logged in", user.first_name)
-        return ConversationHandler.END
-
-    update.message.reply_text('Please enter your username',
-                              reply_markup=telegram.ReplyKeyboardRemove())
-    return PASSWORD
-
-
-def password(update: Update, context: CallbackContext) -> None:
-    """Initiate substribtion proccess"""
-
-    context.chat_data['username'] = update.message.text
-    update.message.reply_text('Please enter your password',
-                              reply_markup=telegram.ReplyKeyboardRemove())
-    return CHECK
-
-
 @send_typing_action
-def check_login(update: Update, context: CallbackContext) -> None:
-    def login(username: str, password: str) -> bool:
+def request_token(update: Update, context: CallbackContext):
+    PAYLOAD = {
+        'X-Plex-Product': 'Telegram Plex Bot',
+        'X-Plex-Version': '0.0.1',
+        'X-Plex-Device': 'Test Device',
+        'X-Plex-Platform': 'Test Platform',
+        'X-Plex-Device-Name': 'Test Device Name',
+        'X-Plex-Device-Vendor': 'Test Vendor',
+        'X-Plex-Model': 'Test Model',
+        'X-Plex-Client-Platform': 'Test Client Platform'
+    }
+
+    async def login():
+        async with PlexAuth(PAYLOAD) as plexauth:
+            await plexauth.initiate_auth()
+            url = plexauth.auth_url()
+            logger.info("Complete auth at URL: %s", url)
+            update.message.reply_text(
+                f'Please log in on the following link: {url}',
+                reply_markup=telegram.ReplyKeyboardRemove())
+            token = await plexauth.token()
+
+        if token:
+            logger.info("Token: %s", format(token))
+            context.user_data["token"] = token
+        else:
+            logger.warning("No token returned.")
+
+    loop = asyncio.new_event_loop()
+    loop.run_until_complete(login())
+
+    logger.debug("Finished Getting Token")
+
+    def login() -> bool:
         try:
-            plex = Plex(username=username, password=password, server='Server')
-            context.user_data['token'] = plex.get_token()
+            Plex(token=context.user_data['token'], server='Server')
         except NotFound as e:
             logger.debug('Unable to log in: %s', e.msg)
             return False
         return True
 
-    if login(context.chat_data['username'], update.message.text):
+    if login():
         update.message.reply_text('The log in has been successful')
+        return ConversationHandler.END
 
-    else:
-        update.message.reply_text(
-            'The log in has has failed \nPlease try again')
-    update.message.delete()  # = 'password has been received'
-    return ConversationHandler.END
+    update.message.reply_text(
+        'The log in has has failed \nPlease try again')
+    return CHOICE
 
 
 def cancel(update: Update, context: CallbackContext) -> None:
@@ -336,12 +333,8 @@ conv_handler = ConversationHandler(
     entry_points=[CommandHandler('start', start)],
     states={
         CHOICE: [MessageHandler(Filters.regex('sign-out'), remove),
-                 MessageHandler(Filters.regex('sign-in'), signin),
+                 MessageHandler(Filters.regex('sign-in'), request_token),
                  CommandHandler('cancel', cancel)],
-        PASSWORD: [CommandHandler('cancel', cancel),
-                   MessageHandler(Filters.all, password)],
-        CHECK: [CommandHandler('cancel', cancel),
-                MessageHandler(Filters.all, check_login)],
     },
     fallbacks=[CommandHandler('cancel', error)])
 
@@ -358,7 +351,7 @@ def start_bot() -> None:
     logger.debug("PID: %s", str(os.getpid()))
 
     # Create the Updater and pass it your bot's token.
-    pickle_persistence = PicklePersistence(filename='bot_DB')
+    pickle_persistence = PicklePersistence(filename='./data/bot_DB')
 
     updater = Updater(token=str(os.getenv("TELEGRAM_TOKEN")),
                       persistence=pickle_persistence,

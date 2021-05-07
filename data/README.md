@@ -1,0 +1,1 @@
+# This folder will contain persisten data for the bot

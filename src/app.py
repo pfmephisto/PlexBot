@@ -1,6 +1,5 @@
 import logging
-from .telegram_bot import start_bot
-from dotenv import load_dotenv
+from telegram_bot import start_bot
 
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s - %(name)s - \
@@ -8,6 +7,5 @@ logging.basicConfig(level=logging.DEBUG,
 
 logger = logging.getLogger(__name__)
 logger.debug('Loading enviroment variables')
-load_dotenv()
 
 start_bot()
